@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "Aphenas",
+    "slug": "aphenas-mobile-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+
+    "ios": {
+      "supportsTablet": true
+    },
+
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.convy12.aphenasmobileapp"
+    },
+
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+
+    "plugins": [
+      "expo-font",
+    ]
+  }
+}

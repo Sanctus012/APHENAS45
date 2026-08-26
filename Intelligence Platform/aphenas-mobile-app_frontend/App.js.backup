@@ -1,0 +1,579 @@
+import React, {
+  useState,
+} from 'react';
+
+import {
+  Alert,
+} from 'react-native';
+
+import { Text, TextInput } from 'react-native';
+
+// Override the default font for every Text/TextInput in the whole app
+const oldTextRender = Text.render;
+Text.render = function (...args) {
+  const origin = oldTextRender.call(this, ...args);
+  return React.cloneElement(origin, {
+    style: [{ fontFamily: 'sans-serif-condensed' }, origin.props.style],
+  });
+};
+
+import { PreferencesProvider } from './context/PreferencesContext';
+
+export default function App() {
+  return (
+    <PreferencesProvider>
+      {/* ...your existing app content */}
+    </PreferencesProvider>
+  );
+}
+
+
+import SplashScreen
+  from './screens/SplashScreen';
+
+import LoginScreen
+  from './screens/LoginScreen';
+
+import ResetPasswordScreen
+  from './screens/ResetPasswordScreen';
+
+import ChangePasswordScreen
+  from './screens/ChangePasswordScreen';
+
+import CompleteProfileScreen
+  from './screens/CompleteProfileScreen';
+
+import RecoveryPhraseScreen
+  from './screens/RecoveryPhraseScreen';
+
+import ChatPINSetupScreen
+  from './screens/ChatPINSetupScreen';
+
+import ChatListScreen
+  from './screens/ChatListScreen';
+
+import AdminProvisioningScreen
+  from './screens/AdminProvisioningScreen';
+
+
+
+export default function App() {
+
+
+  const [
+    currentScreen,
+    setCurrentScreen,
+  ] = useState('splash');
+
+
+  const [
+    currentOfficer,
+    setCurrentOfficer,
+  ] = useState(null);
+
+  const [
+    authToken,
+    setAuthToken,
+  ] = useState(null);
+
+  const logout = () => {
+    setCurrentOfficer(null);
+    setAuthToken(null);
+    setCurrentScreen('login');
+  };
+
+  const isAdminOfficer = (officer) =>
+    String(officer?.role || '').toLowerCase() === 'admin';
+
+  const appScreenForOfficer = (officer) =>
+    isAdminOfficer(officer) ? 'admin' : 'chats';
+
+  const needsChatPin = (officer) =>
+    !officer?.hasChatPin;
+
+
+
+
+  /* =========================================
+     HANDLE LOGIN RESPONSE
+  ========================================= */
+
+  const handleLoginSuccess = (
+    result
+  ) => {
+
+
+    const officerWithToken = {
+      ...result.officer,
+      authToken:
+        result.authToken || null,
+    };
+
+
+    setCurrentOfficer(
+      officerWithToken
+    );
+
+    if (result.authToken) {
+      setAuthToken(result.authToken);
+    }
+
+
+    if (
+      result.nextStep ===
+      'CHANGE_PASSWORD'
+    ) {
+
+      setCurrentScreen(
+        'changePassword'
+      );
+
+      return;
+    }
+
+
+
+    if (
+      result.nextStep ===
+      'COMPLETE_PROFILE'
+    ) {
+
+      setCurrentScreen(
+        'profile'
+      );
+
+      return;
+    }
+
+
+
+    if (
+      result.nextStep ===
+      'APP'
+    ) {
+
+      if (
+        needsChatPin(officerWithToken)
+      ) {
+
+        setCurrentScreen(
+          'chatPin'
+        );
+
+        return;
+      }
+
+      setCurrentScreen(
+        appScreenForOfficer(officerWithToken)
+      );
+
+      return;
+    }
+
+
+
+    Alert.alert(
+      'Login Error',
+      'Unknown login state returned by the server.'
+    );
+
+  };
+
+
+
+
+
+  /* =========================================
+     PASSWORD CREATED
+  ========================================= */
+
+  const handlePasswordChanged = (
+    result
+  ) => {
+
+
+    const officerWithToken = {
+      ...result.officer,
+      authToken:
+        result.authToken || authToken || null,
+    };
+
+
+    setCurrentOfficer(
+      officerWithToken
+    );
+
+
+    if (
+      result.nextStep ===
+      'COMPLETE_PROFILE'
+    ) {
+
+      setCurrentScreen(
+        'profile'
+      );
+
+      return;
+    }
+
+
+
+    if (
+      result.nextStep ===
+      'APP'
+    ) {
+
+      if (
+        needsChatPin(officerWithToken)
+      ) {
+
+        setCurrentScreen(
+          'chatPin'
+        );
+
+        return;
+      }
+
+      setCurrentScreen(
+        appScreenForOfficer(officerWithToken)
+      );
+
+      return;
+    }
+
+  };
+
+
+
+
+
+  /* =========================================
+     PROFILE COMPLETED
+  ========================================= */
+
+  const handleProfileCompleted = (
+    result
+  ) => {
+
+
+    setCurrentOfficer(
+      result.officer
+    );
+
+
+    setCurrentScreen(
+      'recovery'
+    );
+
+
+  };
+
+
+  const handleRecoveryCompleted = (
+    result
+  ) => {
+
+    if (result?.authToken) {
+      setAuthToken(
+        result.authToken
+      );
+    }
+
+    if (result?.officer) {
+      setCurrentOfficer({
+        ...result.officer,
+        authToken:
+          result.authToken || authToken || null,
+      });
+    }
+
+    setCurrentScreen(
+      'chatPin'
+    );
+
+  };
+
+
+
+
+
+  /* =========================================
+     SPLASH
+  ========================================= */
+
+  if (
+    currentScreen ===
+    'splash'
+  ) {
+
+    return (
+
+      <SplashScreen
+
+        onFinish={() =>
+          setCurrentScreen(
+            'login'
+          )
+        }
+
+      />
+
+    );
+
+  }
+
+
+
+
+
+
+  /* =========================================
+     LOGIN
+  ========================================= */
+
+  if (
+    currentScreen ===
+    'login'
+  ) {
+
+    return (
+
+      <LoginScreen
+
+        onLoginSuccess={
+          handleLoginSuccess
+        }
+
+        onResetPassword={() => setCurrentScreen('resetPassword')}
+
+      />
+
+    );
+
+  }
+
+
+
+
+
+
+  /* =========================================
+     RESET PASSWORD
+  ========================================= */
+
+  if (currentScreen === 'resetPassword') {
+    return (
+      <ResetPasswordScreen
+        initialServiceId={currentOfficer?.serviceId}
+        onBack={() => setCurrentScreen('login')}
+        onResetSuccess={() => setCurrentScreen('login')}
+      />
+    );
+  }
+
+
+  /* =========================================
+     PASSWORD CREATION
+  ========================================= */
+
+  if (
+    currentScreen ===
+    'changePassword'
+  ) {
+
+
+    return (
+
+      <ChangePasswordScreen
+
+        officer={
+          currentOfficer
+        }
+
+
+        onPasswordChanged={
+          handlePasswordChanged
+        }
+
+      />
+
+    );
+
+  }
+
+
+
+
+
+
+  /* =========================================
+     COMPLETE PROFILE
+  ========================================= */
+
+  if (
+    currentScreen ===
+    'profile'
+  ) {
+
+
+    return (
+
+      <CompleteProfileScreen
+
+        officer={
+          currentOfficer
+        }
+
+
+        onProfileCompleted={
+          handleProfileCompleted
+        }
+
+      />
+
+    );
+
+  }
+
+
+
+
+
+
+  /* =========================================
+     RECOVERY PHRASE
+  ========================================= */
+
+  if (
+    currentScreen ===
+    'recovery'
+  ) {
+
+
+    return (
+
+      <RecoveryPhraseScreen
+
+        officer={
+          currentOfficer
+        }
+
+
+        onRecoveryCompleted={
+          handleRecoveryCompleted
+        }
+
+      />
+
+    );
+
+  }
+
+  /* =========================================
+   CHAT PIN SETUP
+========================================= */
+
+if (
+  currentScreen ===
+  'chatPin'
+) {
+
+  return (
+
+    <ChatPINSetupScreen
+
+      officer={currentOfficer}
+
+      onComplete={() => {
+
+        setCurrentOfficer((officer) => ({
+          ...officer,
+          hasChatPin: true,
+        }));
+
+        setCurrentScreen(
+          appScreenForOfficer(currentOfficer)
+        );
+
+      }}
+
+    />
+
+  );
+
+}
+
+
+
+
+  /* =========================================
+     CHATS
+  ========================================= */
+
+  if (
+    currentScreen ===
+    'chats'
+  ) {
+
+
+    return (
+
+      <ChatListScreen
+
+        officer={
+          currentOfficer
+        }
+
+        onLogout={
+          logout
+        }
+
+      />
+
+    );
+
+  }
+
+
+  /* =========================================
+     ADMIN
+  ========================================= */
+
+  if (
+    currentScreen ===
+    'admin'
+  ) {
+
+    return (
+
+      <AdminProvisioningScreen
+
+        officer={
+          currentOfficer
+        }
+
+        authToken={
+          authToken
+        }
+
+        onOpenChats={() =>
+          setCurrentScreen(
+            'chats'
+          )
+        }
+
+        onLogout={logout}
+
+      />
+
+    );
+
+  }
+
+
+
+
+
+  return null;
+
+}
