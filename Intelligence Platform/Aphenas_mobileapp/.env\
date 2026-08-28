@@ -1,0 +1,28 @@
+# MissionCore — LOCAL environment. Git-ignored. Do not commit or share.
+
+# --- Core Django ---
+DJANGO_SECRET_KEY=dryeL_4cZ09^$BqrS!dWF!_GrKMSrzl)=y@n_rEhTj%&u(k!U+
+DJANGO_DEBUG=True
+DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1
+
+# --- Database (PostgreSQL) ---
+# TODO: create this role + database, then set DB_PASSWORD below.
+DB_NAME=missioncore
+DB_USER=aphenas_user
+DB_PASSWORD=Aphenas123!
+DB_HOST=localhost
+DB_PORT=5432
+
+# --- Redis / Channels (Phase 2 — not needed yet) ---
+# REDIS_URL=redis://localhost:6379/0
+
+
+EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+EMAIL_HOST_USER=kingbennieforex@gmail.com
+EMAIL_HOST_PASSWORD=mlkmxcjxizryhcrh
+DEFAULT_FROM_EMAIL=MissionCore <kingbennieforex@gmail.com>
+PORT=5050
+PUBLIC_URL=https://duffel-treble-cube.ngrok-free.dev
+ONBOARDING_TOKEN_SECRET=2a75f24c88711bac1e7b4a50c74eb57d60a498ca336cbb827f2ca9053f66a0a5
+RECOVERY_PHRASE_PEPPER=b656aa54ca7e96583d38d07ab5fc0124d92d356e5984dac532f5d70ffcda3408
+CHAT_PIN_PEPPER=c7baeaa9ae890dd11b4ca269b2ef85e4c6e2aa9bce9d665fbf1e5080a4921f5d
