@@ -64,3 +64,10 @@ export async function unlockConversation(conversationId, pin, validityPeriod, au
     body: JSON.stringify({ pin, validityPeriod }),
   }));
 }
+
+export async function relockConversation(conversationId, authToken) {
+  return parse(await fetch(`${API_URL}/conversations/${conversationId}/relock`, {
+    method: 'POST',
+    headers: authHeaders(authToken),
+  }));
+}

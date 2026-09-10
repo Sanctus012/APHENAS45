@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -24,7 +25,7 @@ import {
   sendMessage as sendMessageHttp,
   unlockMessage as unlockMessageHttp,
 } from '../services/messageService';
-import { createDirectConversation, getConversationUnlockStatus, unlockConversation } from '../services/conversationService';
+import { createDirectConversation, getConversationUnlockStatus, unlockConversation, relockConversation } from '../services/conversationService';
 import { getCachedDeviceId } from '../services/deviceService';
 import { colors, initials } from '../theme/aphenasTheme';
 
@@ -110,26 +111,20 @@ export default function ChatScreen({ currentUser, conversation: conversationProp
     setActiveConversationId(conversationId);
   }, [conversationId]);
 
-  useEffect(() => {
-    let mounted = true;
-    if (!conversationId || !currentUserId || !authToken) return () => {};
-    setPin('');
-    setPinError('');
-    setSelectedMessageId(null);
-    setLockModalVisible(false);
-    getConversationUnlockStatus(conversationId, authToken)
-      .then((result) => {
-        if (!mounted) return;
-        setChatLocked(Boolean(result.locked));
-        setUnlockModalVisible(Boolean(result.locked));
-      })
-      .catch(() => {
-        if (!mounted) return;
-        setChatLocked(true);
-        setUnlockModalVisible(true);
-      });
-    return () => { mounted = false; };
-  }, [authToken, conversationId, currentUserId]);
+    useFocusEffect(
+    useCallback(() => {
+      if (!conversationId || !currentUserId || !authToken) return undefined;
+
+      setPin('');
+      setPinError('');
+      setSelectedMessageId(null);
+      setLockModalVisible(false);
+      setChatLocked(true);
+      setUnlockModalVisible(true);
+
+      return undefined;
+    }, [authToken, conversationId, currentUserId])
+  );
 
   const persistCallStatus = useCallback(async (callId, status) => {
     if (!callId || !currentUserId) return;
@@ -575,29 +570,69 @@ export default function ChatScreen({ currentUser, conversation: conversationProp
   };
 
   const openPin = (mode, messageId = null) => {
-    setPin(''); setPinError(''); setSelectedMessageId(messageId);
-    if (mode === 'lock') setLockModalVisible(true); else setUnlockModalVisible(true);
-  };
+  setPin('');
+  setPinError('');
+  setSelectedMessageId(messageId);
 
+  if (mode === 'lock') {
+    setLockModalVisible(true);
+  } else {
+    setUnlockModalVisible(true);
+  }
+
+  setTimeout(() => {
+    pinInputRef.current?.focus();
+  }, 300);
+  };
   const pinInputRef = useRef(null);
 
   const renderPinBoxes = () => {
-    const digits = pin.padEnd(6, ' ').slice(0, 6).split('');
-    return (
-      <Pressable style={styles.pinBoxes} onPress={() => pinInputRef.current?.focus()}>
-        {digits.map((digit, index) => (
-          <View key={String(index)} style={styles.pinBox}>
-            <Text style={styles.pinBoxText}>{digit.trim()}</Text>
-          </View>
-        ))}
-      </Pressable>
-    );
-  };
+  const digits = Array.from({ length: 6 }, (_, index) => pin[index] || '');
 
-  const lockChat = async () => {
-    if (!/^\d{6}$/.test(pin)) return setPinError('Enter the six-digit access code.');
+  return (
+    <Pressable
+      style={styles.pinBoxes}
+      onPress={() => pinInputRef.current?.focus()}
+    >
+      {digits.map((digit, index) => (
+        <View
+          key={String(index)}
+          style={[
+            styles.pinBox,
+            pin.length === index && styles.pinBoxActive,
+          ]}
+        >
+          <Text style={styles.pinBoxText}>
+            {digit ? '•' : ''}
+          </Text>
+        </View>
+      ))}
+    </Pressable>
+  );
+};
+
+useEffect(() => {
+  const unsubscribe = navigation.addListener('blur', () => {
+    if (!activeConversationId) return;
+
+    setChatLocked(true);
+    setPin('');
+    setPinError('');
+    setUnlockModalVisible(false);
+
+    relockConversation(activeConversationId, authToken).catch((error) => {
+      console.error('Unable to re-lock conversation:', error);
+    });
+  });
+
+  return unsubscribe;
+}, [navigation, activeConversationId, authToken]);
+
+
+  const lockChat = async (pinValue = pin) => {
+    if (!/^\d{6}$/.test(pinValue)) return setPinError('Enter the six-digit access code.');
     try {
-      await setChatPin(currentUserId, pin, authToken);
+      await setChatPin(currentUserId, pinValue, authToken);
       setChatLocked(true);
       setLockModalVisible(false);
       setPin('');
@@ -611,18 +646,18 @@ export default function ChatScreen({ currentUser, conversation: conversationProp
     if (!response.ok || !data.success) throw new Error(data.message || 'Unable to load unlocked messages');
     setMessages((data.messages || []).map((item) => mapMessage(item, currentUserId)));
   };
-  const unlockChat = async () => {
+  const unlockChat = async (pinValue = pin) => {
     try {
-      await unlockConversation(activeConversationId, pin, validity, authToken);
+      await unlockConversation(activeConversationId, pinValue, validity, authToken);
       await reloadMessagesAfterUnlock();
       setChatLocked(false);
       setUnlockModalVisible(false);
       setPin('');
     } catch (pinErrorValue) { setPinError(pinErrorValue.message || 'Incorrect access code'); }
   };
-  const unlockSelectedMessage = async () => {
+  const unlockSelectedMessage = async (pinValue = pin) => {
     try {
-      const response = await unlockMessageHttp(selectedMessageId, pin, authToken);
+      const response = await unlockMessageHttp(selectedMessageId, pinValue, authToken);
       setMessages((current) => current.map((item) => (
         item.id === selectedMessageId
           ? mergeMessageState(item, { ...mapMessage(response.message, currentUserId), locked: false })
@@ -696,8 +731,8 @@ export default function ChatScreen({ currentUser, conversation: conversationProp
       </View>
 
       <Modal visible={menuVisible} transparent animationType="fade" onRequestClose={() => setMenuVisible(false)}><Pressable style={styles.menuOverlay} onPress={() => setMenuVisible(false)}><View style={styles.menuPanel} onStartShouldSetResponder={() => true}><Text style={styles.menuTitle}>{chatName}</Text><Pressable style={styles.menuOption} onPress={() => { setMenuVisible(false); setSearchMode(true); }}><Text style={styles.menuOptionText}>Search chat</Text></Pressable><Pressable style={styles.menuOption} onPress={() => { setMenuVisible(false); openPin(chatLocked ? 'unlock' : 'lock'); }}><Text style={styles.menuOptionText}>{chatLocked ? 'Unlock chat' : 'Lock chat'}</Text></Pressable><Pressable style={styles.menuOption} onPress={clearHistory}><Text style={[styles.menuOptionText, styles.dangerText]}>Clear history</Text></Pressable><Pressable style={styles.menuOption} onPress={() => setMenuVisible(false)}><Text style={styles.menuCancel}>Cancel</Text></Pressable></View></Pressable></Modal>
-      <Modal visible={lockModalVisible || (unlockModalVisible && selectedMessageId === null)} transparent animationType="fade" onRequestClose={() => { setLockModalVisible(false); setUnlockModalVisible(false); }}><View style={styles.modalOverlay}><View style={styles.pinModal}><Text style={styles.modalTitle}>{lockModalVisible ? 'Lock Chat' : 'Unlock Chat'}</Text><Text style={styles.modalDescription}>{lockModalVisible ? 'Setup an access code dedicated for your chat to keep your message secure' : 'Input passcode to unlock chat'}</Text><Text style={styles.inputLabel}>Input Code</Text>{renderPinBoxes()}<TextInput ref={pinInputRef} style={styles.hiddenPinInput} value={pin} onChangeText={(value) => { setPin(value.replace(/\D/g, '').slice(0, 6)); setPinError(''); }} keyboardType="number-pad" secureTextEntry maxLength={6} autoFocus />{unlockModalVisible && selectedMessageId === null && <View style={styles.validityBlock}><Text style={styles.validityLabel}>Open Validity Period</Text><View style={styles.validityRow}>{VALIDITY_OPTIONS.map((option) => <Pressable key={option} style={styles.validityItem} onPress={() => setValidity((current) => current === option ? '' : option)}><View style={[styles.checkBox, validity === option && styles.checkBoxActive]}>{validity === option && <Feather name="check" size={13} color="#FFFFFF" />}</View><Text style={styles.validityText}>{option}</Text></Pressable>)}</View><Text style={styles.note}>NB. Chat will automatically lock after 7 days if open validity period is not set.</Text></View>}{!!pinError && <Text style={styles.pinError}>{pinError}</Text>}<Pressable style={styles.greenButton} onPress={lockModalVisible ? lockChat : unlockChat}><Text style={styles.greenButtonText}>{lockModalVisible ? 'Lock' : 'Unlock'}</Text></Pressable></View></View></Modal>
-      <Modal visible={unlockModalVisible && selectedMessageId !== null} transparent animationType="fade" onRequestClose={() => setUnlockModalVisible(false)}><View style={styles.modalOverlay}><View style={styles.messageLockedModal}><Text style={styles.modalTitle}>Message Locked</Text><Text style={styles.modalDescription}>You have no viewing access to this message please enter passcode to view</Text><Text style={styles.inputLabel}>Input Code</Text>{renderPinBoxes()}<TextInput ref={pinInputRef} style={styles.hiddenPinInput} value={pin} onChangeText={(value) => { setPin(value.replace(/\D/g, '').slice(0, 6)); setPinError(''); }} keyboardType="number-pad" secureTextEntry maxLength={6} autoFocus />{!!pinError && <Text style={styles.pinError}>{pinError}</Text>}<Pressable style={styles.greenButton} onPress={unlockSelectedMessage}><Text style={styles.greenButtonText}>Unlock</Text></Pressable></View></View></Modal>
+      <Modal visible={lockModalVisible || (unlockModalVisible && selectedMessageId === null)} transparent animationType="fade" onRequestClose={() => { setLockModalVisible(false); setUnlockModalVisible(false); }}><View style={styles.modalOverlay}><View style={styles.pinModal}><Text style={styles.modalTitle}>{lockModalVisible ? 'Lock Chat' : 'Unlock Chat'}</Text><Text style={styles.modalDescription}>{lockModalVisible ? 'Setup an access code dedicated for your chat to keep your message secure' : 'Input passcode to unlock chat'}</Text><Text style={styles.inputLabel}>Input Code</Text>{renderPinBoxes()}<TextInput ref={pinInputRef} style={styles.pinInputOverlay} value={pin} onChangeText={(value) => { const cleanValue = value.replace(/\D/g, '').slice(0, 6); setPin(cleanValue); setPinError(''); if (cleanValue.length === 6) { setTimeout(() => { if (lockModalVisible) lockChat(cleanValue); else if (selectedMessageId !== null) unlockSelectedMessage(cleanValue); else unlockChat(cleanValue); }, 100); } }} keyboardType={Platform.OS === 'ios' ? 'number-pad' : 'numeric'} inputMode="numeric" maxLength={6} autoFocus showSoftInputOnFocus={true} caretHidden contextMenuHidden textContentType="oneTimeCode" />{unlockModalVisible && selectedMessageId === null && <View style={styles.validityBlock}><Text style={styles.validityLabel}>Open Validity Period</Text><View style={styles.validityRow}>{VALIDITY_OPTIONS.map((option) => <Pressable key={option} style={styles.validityItem} onPress={() => setValidity((current) => current === option ? '' : option)}><View style={[styles.checkBox, validity === option && styles.checkBoxActive]}>{validity === option && <Feather name="check" size={13} color="#FFFFFF" />}</View><Text style={styles.validityText}>{option}</Text></Pressable>)}</View><Text style={styles.note}>NB. Chat will automatically lock after 7 days if open validity period is not set.</Text></View>}{!!pinError && <Text style={styles.pinError}>{pinError}</Text>}<Pressable style={styles.greenButton} onPress={lockModalVisible ? lockChat : unlockChat}><Text style={styles.greenButtonText}>{lockModalVisible ? 'Lock' : 'Unlock'}</Text></Pressable></View></View></Modal>
+      <Modal visible={unlockModalVisible && selectedMessageId !== null} transparent animationType="fade" onRequestClose={() => setUnlockModalVisible(false)}><View style={styles.modalOverlay}><View style={styles.messageLockedModal}><Text style={styles.modalTitle}>Message Locked</Text><Text style={styles.modalDescription}>You have no viewing access to this message please enter passcode to view</Text><Text style={styles.inputLabel}>Input Code</Text>{renderPinBoxes()}<TextInput ref={pinInputRef} style={styles.pinInputOverlay} value={pin} onChangeText={(value) => { const cleanValue = value.replace(/\D/g, '').slice(0, 6); setPin(cleanValue); setPinError(''); if (cleanValue.length === 6) { setTimeout(() => { if (lockModalVisible) lockChat(cleanValue); else if (selectedMessageId !== null) unlockSelectedMessage(cleanValue); else unlockChat(cleanValue); }, 100); } }} keyboardType={Platform.OS === 'ios' ? 'number-pad' : 'numeric'} inputMode="numeric" maxLength={6} autoFocus showSoftInputOnFocus={true} caretHidden contextMenuHidden textContentType="oneTimeCode" />{!!pinError && <Text style={styles.pinError}>{pinError}</Text>}<Pressable style={styles.greenButton} onPress={unlockSelectedMessage}><Text style={styles.greenButtonText}>Unlock</Text></Pressable></View></View></Modal>
       <Modal visible={confirmClearVisible} transparent animationType="fade" onRequestClose={() => setConfirmClearVisible(false)}><View style={styles.modalOverlay}><View style={styles.clearModal}><Text style={styles.modalTitle}>Clear history</Text><Text style={styles.modalDescription}>Are you sure you want to clear your chat history with {chatName}</Text><Pressable style={styles.clearCheckRow} onPress={() => setClearForEveryone((value) => !value)}><View style={[styles.clearCheckBox, clearForEveryone && styles.clearCheckBoxActive]}>{clearForEveryone && <Feather name="check" size={13} color="#FFFFFF" />}</View><Text style={styles.clearCheckText}>Also delete for {chatName}</Text></Pressable><View style={styles.clearActions}><Pressable onPress={() => { setConfirmClearVisible(false); setClearForEveryone(false); }}><Text style={styles.cancelAction}>Cancel</Text></Pressable><Pressable onPress={confirmClearHistory}><Text style={styles.deleteAction}>Delete</Text></Pressable></View></View></View></Modal>
     </KeyboardAvoidingView>
   );
@@ -794,7 +829,8 @@ const styles = StyleSheet.create({
   pinBoxes: { flexDirection: 'row', gap: 6, marginBottom: 28 },
   pinBox: { flex: 1, height: 48, backgroundColor: colors.soft, justifyContent: 'center', alignItems: 'center' },
   pinBoxText: { color: colors.text, fontSize: 17, fontWeight: '800' },
-  hiddenPinInput: { position: 'absolute', width: 1, height: 1, opacity: 0 },
+  pinInputOverlay: {position: 'absolute', left: 0, right: 0,  top: 0, bottom: 0, opacity: 0.01,},
+  pinBoxActive: { borderColor: colors.green, borderWidth: 2 },
   validityBlock: { marginTop: 4, marginBottom: 4 },
   validityLabel: { color: colors.text, fontSize: 14, marginBottom: 11 },
   validityRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 28 },

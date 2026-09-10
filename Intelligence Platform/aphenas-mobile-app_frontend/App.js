@@ -41,6 +41,7 @@ const SignalStack = createNativeStackNavigator();
 const SettingsStack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
 
+
 const stackOptions = {
   headerShown: false,
   animation: 'slide_from_right',
@@ -90,13 +91,15 @@ function MainTabBar({ state, navigation }) {
 
 function ChatStackScreen({ officer, onLogout }) {
   return (
-    <ChatStack.Navigator screenOptions={stackOptions}>
+    <ChatStack.Navigator screenOptions={{ headerShown: false, gestureEnabled: true, fullScreenGestureEnabled: true, animation: 'slide_from_right' }}>
       <ChatStack.Screen name="ChatList">
         {(props) => <ChatListScreen {...props} officer={officer} onLogout={onLogout} listType="Chats" />}
       </ChatStack.Screen>
+
       <ChatStack.Screen name="NewChat">
         {(props) => <NewChatScreen {...props} officer={officer} />}
       </ChatStack.Screen>
+
       <ChatStack.Screen name="ChatConversation">
         {(props) => <ChatScreen {...props} currentUser={officer} />}
       </ChatStack.Screen>
@@ -106,23 +109,24 @@ function ChatStackScreen({ officer, onLogout }) {
 
 function GroupsStackScreen({ officer }) {
   return (
-    <GroupsStack.Navigator screenOptions={stackOptions}>
+    <GroupsStack.Navigator screenOptions={{ headerShown: false, gestureEnabled: true, fullScreenGestureEnabled: true, animation: 'slide_from_right' }}>
       <GroupsStack.Screen name="GroupList">
         {(props) => <ChatListScreen {...props} officer={officer} listType="Groups" />}
       </GroupsStack.Screen>
+
       <GroupsStack.Screen name="ChatConversation">
         {(props) => <ChatScreen {...props} currentUser={officer} />}
       </GroupsStack.Screen>
     </GroupsStack.Navigator>
   );
-}
+} 
 
 function CallsStackScreen({ officer, mainNavigation }) {
   const currentUserId = userIdFromOfficer(officer);
   const authToken = officer?.authToken;
 
   return (
-    <CallsStack.Navigator screenOptions={stackOptions}>
+    <CallsStack.Navigator screenOptions={{ headerShown: false, gestureEnabled: true, fullScreenGestureEnabled: true, animation: 'slide_from_right' }}>
       <CallsStack.Screen name="CallsList">
         {(props) => (
           <CallsScreen
@@ -163,7 +167,7 @@ function CallsStackScreen({ officer, mainNavigation }) {
 
 function SignalStackScreen({ officer, mainNavigation }) {
   return (
-    <SignalStack.Navigator screenOptions={stackOptions}>
+    <SignalStack.Navigator screenOptions={{ headerShown: false, gestureEnabled: true, fullScreenGestureEnabled: true, animation: 'slide_from_right' }}>
       <SignalStack.Screen name="SignalHome">
         {(props) => (
           <SignalScreen
@@ -179,9 +183,34 @@ function SignalStackScreen({ officer, mainNavigation }) {
 
 function SettingsStackScreen({ officer, onLogout }) {
   return (
-    <SettingsStack.Navigator screenOptions={stackOptions}>
+    <SettingsStack.Navigator
+      screenOptions={{
+        headerShown: false,
+        gestureEnabled: true,
+        fullScreenGestureEnabled: true,
+        animation: 'slide_from_right',
+      }}
+    >
       <SettingsStack.Screen name="SettingsHome">
-        {(props) => <SettingsScreen {...props} officer={officer} onLogout={onLogout} />}
+        {(props) => (
+          <SettingsScreen
+            {...props}
+            officer={officer}
+            onLogout={onLogout}
+          />
+        )}
+      </SettingsStack.Screen>
+
+      <SettingsStack.Screen name="CreateOfficer">
+        {(props) => (
+          <AdminProvisioningScreen
+            {...props}
+            officer={officer}
+            authToken={officer?.authToken}
+            onOpenChats={() => props.navigation.navigate('SettingsHome')}
+            onLogout={onLogout}
+          />
+        )}
       </SettingsStack.Screen>
     </SettingsStack.Navigator>
   );
@@ -216,6 +245,7 @@ function MainApplication({ officer, onLogout }) {
 function AppContent() {
   const [currentOfficer, setCurrentOfficer] = useState(null);
   const [authToken, setAuthToken] = useState(null);
+  const [chatPin, setChatPin] = useState('');
 
   const logout = (navigation) => {
     setCurrentOfficer(null);
@@ -303,8 +333,8 @@ function AppContent() {
 
   return (
     <NavigationContainer>
-      <RootStack.Navigator initialRouteName="Splash" screenOptions={stackOptions}>
-        <RootStack.Screen name="Splash">
+     <RootStack.Navigator initialRouteName="Splash" screenOptions={{ headerShown: false, gestureEnabled: true, fullScreenGestureEnabled: true, animation: 'slide_from_right' }}>
+         <RootStack.Screen name="Splash">
           {({ navigation }) => <SplashScreen onFinish={() => navigation.replace('Login')} />}
         </RootStack.Screen>
         <RootStack.Screen name="Login">
@@ -352,7 +382,7 @@ function AppContent() {
           {({ navigation }) => (
             <ChatPINSetupScreen
               officer={currentOfficer}
-              onComplete={() => completeChatPin(navigation)}
+             onComplete={(pin) => completeChatPin(navigation, pin)} 
             />
           )}
         </RootStack.Screen>

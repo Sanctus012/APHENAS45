@@ -6,7 +6,7 @@ import { setChatPin, verifyChatPin } from '../services/chatPinService';
 import { colors } from '../theme/aphenasTheme';
 import { usePreferences } from '../context/PreferencesContext';
  
-export default function SettingsScreen({ officer, onLogout }) {
+export default function SettingsScreen({ officer, onLogout, navigation }) {
   // --- Chat Lock: two-step flow (verify old PIN, then set new PIN) ---
   const [step, setStep] = useState('verify'); // 'verify' | 'change'
   const [oldPin, setOldPin] = useState('');
@@ -17,6 +17,7 @@ export default function SettingsScreen({ officer, onLogout }) {
   const [pinError, setPinError] = useState('');
  
   const userId = officer?.userId || officer?.id;
+  const isAdmin = String(officer?.role || '').toLowerCase() === 'admin';
  
   const resetPinFlow = () => {
     setStep('verify');
@@ -204,11 +205,32 @@ export default function SettingsScreen({ officer, onLogout }) {
         <Text style={styles.help}>Default unlock period: 7 days when no validity period is selected. Duress code management is pending operational approval.</Text>
       </View>
  
-      <View style={styles.panel}>
-        <Text style={styles.panelTitle}>Notifications</Text>
-        <Text style={styles.help}>Notification preferences will appear here when push delivery is connected.</Text>
+      {isAdmin && (
+  <View style={styles.panel}>
+    <Text style={styles.panelTitle}>Administration</Text>
+
+    <Pressable
+      style={styles.adminRow}
+      onPress={() => navigation.navigate('CreateOfficer')}
+    >
+      <View style={{ flex: 1 }}>
+        <Text style={styles.rowLabel}>Create officer</Text>
+        <Text style={styles.help}>
+          Provision a new officer account and temporary password.
+        </Text>
       </View>
- 
+
+      <Feather name="chevron-right" size={22} color={colors.green} />
+    </Pressable>
+  </View>
+)}
+
+<View style={styles.panel}>
+  <Text style={styles.panelTitle}>Notifications</Text>
+  <Text style={styles.help}>
+    Notification preferences will appear here when push delivery is connected.
+  </Text>
+</View>
       <Pressable style={styles.logout} onPress={onLogout}>
         <Feather name="log-out" size={18} color="#A43C3C" />
         <Text style={styles.logoutText}>Log out</Text>

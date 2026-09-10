@@ -34,6 +34,9 @@ function initials(value) {
 function formatTime(value) {
   return formatListTime(value);
 }
+function previewText(item) {
+  return 'New message';
+}
 
 export default function ChatListScreen({ officer, onLogout, navigation, route, listType }) {
   const currentUserId = userIdFromOfficer(officer);
@@ -155,19 +158,36 @@ export default function ChatListScreen({ officer, onLogout, navigation, route, l
       const nextName = participant.name || name;
 
       setKnownConversationNames((current) => ({ ...current, [String(nextConversationId)]: nextName }));
-      navigation.navigate('ChatConversation', {
-        conversationId: nextConversationId,
-        conversation: {
-          ...item,
-          id: nextConversationId,
-          name: nextName,
-          conversationId: nextConversationId,
-          participantId: participant.id || participantId,
-          participant_id: participant.id || participantId,
-          participant_name: nextName,
-          participant_service_id: participant.serviceId || item.participant_service_id,
-        },
-      });
+
+setChats((current) =>
+  current.map((chat) =>
+    String(chat.id) === String(item.id)
+      ? { ...chat, unread_count: 0 }
+      : chat
+  )
+);
+
+setGroups((current) =>
+  current.map((group) =>
+    String(group.id) === String(item.id)
+      ? { ...group, unread_count: 0 }
+      : group
+  )
+);
+
+navigation.navigate('ChatConversation', {
+  conversationId: nextConversationId,
+  conversation: {
+    ...item,
+    id: nextConversationId,
+    name: nextName,
+    conversationId: nextConversationId,
+    participantId: participant.id || participantId,
+    participant_id: participant.id || participantId,
+    participant_name: nextName,
+    participant_service_id: participant.serviceId || item.participant_service_id,
+  },
+});
     } catch (error) {
       Alert.alert('Open chat failed', error.message || 'Unable to open this conversation.');
     }
@@ -257,12 +277,14 @@ export default function ChatListScreen({ officer, onLogout, navigation, route, l
             <Text style={styles.time}>{formatTime(item.last_message_at || item.last_activity)}</Text>
           </View>
           <View style={styles.rowBottomLine}>
-            <Text style={styles.preview} numberOfLines={1}>
-              {item.last_message || 'New message'}
-            </Text>
-            {!!Number(item.unread_count) && (
-              <View style={styles.unread}><Text style={styles.unreadText}>{item.unread_count}</Text></View>
-            )}
+           <Text style={styles.preview} numberOfLines={1}>
+  {previewText(item)}
+</Text>
+            {Number(item.unread_count || 0) > 0 && (
+  <View style={styles.unread}>
+    <Text style={styles.unreadText}>{item.unread_count}</Text>
+  </View>
+)}
           </View>
         </View>
       </Pressable>

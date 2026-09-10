@@ -91,6 +91,43 @@ router.post('/:id/unlock', chatUnlockLimiter, async (req, res) => {
   }
 });
 
+router.post('/:id/relock', async (req, res) => {
+  try {
+    const conversationId = Number(req.params.id);
+    const userId = Number(req.user.id);
+
+    if (!(await isConversationMember(conversationId, userId))) {
+      return res.status(403).json({
+        success: false,
+        message: 'User is not a member of this conversation',
+      });
+    }
+
+    await pool.query(
+      `DELETE FROM conversation_unlocks
+       WHERE conversation_id = $1
+         AND user_id = $2`,
+      [conversationId, userId]
+    );
+
+    await writeAuditLog({
+      eventType: 'chat_relock',
+      actorUserId: userId,
+      targetUserId: userId,
+      targetType: 'conversation',
+      targetId: conversationId,
+      req,
+    });
+
+    return res.json({
+      success: true,
+      locked: true,
+    });
+  } catch (error) {
+    return respondError(res, error, 'Unable to lock conversation');
+  }
+});
+
 router.post('/direct', async (req, res) => {
   try {
     const userId = req.user.id;
