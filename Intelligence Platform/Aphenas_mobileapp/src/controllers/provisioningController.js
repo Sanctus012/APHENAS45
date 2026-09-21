@@ -126,6 +126,8 @@ export async function provisionOfficer(req, res) {
 
         secureId:
           result.profile.secure_id,
+        watermarkId:
+          result.profile.secure_id,
 
         displayName:
           result.profile.display_name,
@@ -203,6 +205,7 @@ export async function previewSecureId(req, res) {
     return res.status(200).json({
       success: true,
       secureId,
+      watermarkId: secureId,
     });
   } catch (error) {
     console.error(

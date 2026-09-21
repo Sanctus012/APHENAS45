@@ -3,6 +3,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import {
   Alert,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -14,6 +15,9 @@ import {
   View,
 } from 'react-native';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
+import { Audio } from 'expo-av';
 import socket from '../services/socketService';
 import { API_URL } from '../config/api';
 import { authHeaders } from '../services/apiClient';
@@ -36,10 +40,27 @@ function mapMessage(message, currentUserId) {
   const createdAt = new Date(message.created_at || Date.now()).getTime();
   const isDeleted = Boolean(message.deleted_at);
   const isLocked = Boolean(message.locked || message.redacted);
+  const messageType = String(message.message_type || 'TEXT').toUpperCase();
+  let attachment = message.attachment || null;
+  if (!attachment && message.content && ['FILE', 'AUDIO'].includes(messageType)) {
+    try {
+      const parsed = JSON.parse(message.content);
+      if (parsed && typeof parsed === 'object') attachment = parsed;
+    } catch {
+      attachment = null;
+    }
+  }
+  const displayText = messageType === 'AUDIO'
+    ? 'Voice note'
+    : messageType === 'FILE'
+      ? (attachment?.name || 'Attached file')
+      : (message.content || '');
   return {
     ...message,
     id: String(message.id),
-    text: isDeleted ? 'This message was deleted' : isLocked ? '' : message.content || '',
+    message_type: messageType,
+    attachment,
+    text: isDeleted ? 'This message was deleted' : isLocked ? '' : displayText,
     sender: Number(message.sender_id) === currentUserId ? 'me' : 'them',
     createdAt: Number.isNaN(createdAt) ? Date.now() : createdAt,
     time: new Date(createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
@@ -104,8 +125,13 @@ export default function ChatScreen({ currentUser, conversation: conversationProp
   const [clearForEveryone, setClearForEveryone] = useState(false);
   const [searchMode, setSearchMode] = useState(false);
   const [chatSearch, setChatSearch] = useState('');
+  const [recording, setRecording] = useState(null);
+  const [mediaBusy, setMediaBusy] = useState(false);
   const scrollRef = useRef(null);
   const typingTimerRef = useRef(null);
+  const inactivityTimerRef = useRef(null);
+  const chatLockedRef = useRef(true);
+  const lastActivityRef = useRef(Date.now());
 
   useEffect(() => {
     setActiveConversationId(conversationId);
@@ -120,6 +146,7 @@ export default function ChatScreen({ currentUser, conversation: conversationProp
       setSelectedMessageId(null);
       setLockModalVisible(false);
       setChatLocked(true);
+      chatLockedRef.current = true;
       setUnlockModalVisible(true);
 
       return undefined;
@@ -139,6 +166,40 @@ export default function ChatScreen({ currentUser, conversation: conversationProp
       throw new Error(data.message || 'Unable to update call status');
     }
   }, [authToken, currentUserId]);
+
+  const lockForInactivity = useCallback(async () => {
+    if (chatLockedRef.current || !activeConversationId) return;
+    chatLockedRef.current = true;
+    setChatLocked(true);
+    setMessage('');
+    setReplyTo(null);
+    setEditingMessage(null);
+    setPin('');
+    setPinError('');
+    setSelectedMessageId(null);
+    setUnlockModalVisible(true);
+    try {
+      await relockConversation(activeConversationId, authToken);
+    } catch (lockError) {
+      setError(lockError.message || 'Unable to lock chat after inactivity');
+    }
+  }, [activeConversationId, authToken]);
+
+  const registerActivity = useCallback(() => {
+    if (chatLockedRef.current) return;
+    lastActivityRef.current = Date.now();
+  }, []);
+
+  useEffect(() => {
+    inactivityTimerRef.current = setInterval(() => {
+      if (!chatLockedRef.current && Date.now() - lastActivityRef.current >= MESSAGE_LOCK_TIME) {
+        lockForInactivity();
+      }
+    }, 1000);
+    return () => {
+      if (inactivityTimerRef.current) clearInterval(inactivityTimerRef.current);
+    };
+  }, [lockForInactivity]);
 
   const addMessage = useCallback((incoming) => {
     setMessages((current) => {
@@ -187,6 +248,7 @@ export default function ChatScreen({ currentUser, conversation: conversationProp
         const data = await response.json();
         if (!response.ok || !data.success) throw new Error(data.message || 'Unable to synchronize messages');
         if (!mounted) return;
+        if (chatLockedRef.current) return;
         setMessages((current) => {
           const merged = [...current];
           for (const item of (data.messages || []).map((row) => mapMessage(row, currentUserId))) {
@@ -300,7 +362,7 @@ export default function ChatScreen({ currentUser, conversation: conversationProp
         if (!response.ok || !data.success) throw new Error(data.message || 'Unable to load messages');
         if (!mounted) return;
         const loaded = (data.messages || []).map((item) => mapMessage(item, currentUserId));
-        setMessages(loaded);
+        if (!chatLockedRef.current) setMessages(loaded);
         setError('');
         loaded.filter((item) => item.sender === 'them').forEach(markIncomingRead);
       } catch (loadError) {
@@ -345,27 +407,8 @@ export default function ChatScreen({ currentUser, conversation: conversationProp
     };
   }, [activeConversationId, addMessage, authToken, chatName, currentUserId, isDirectConversation, markIncomingRead, participantId, persistCallStatus]);
 
-  useEffect(() => {
-    const timer = setInterval(() => {
-      const now = Date.now();
-      setMessages((current) => current.map((item) => {
-        const shouldLock = item.sender === 'me'
-          && !String(item.id).startsWith('local:')
-          && !item.locked
-          && !item.deleted
-          && item.status !== 'failed'
-          && now - item.createdAt >= MESSAGE_LOCK_TIME;
-        if (shouldLock) {
-          lockMessageHttp(item.id, true, authToken).catch(() => {});
-          return { ...item, locked: true, text: '' };
-        }
-        return item;
-      }));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [authToken]);
-
   const handleChangeText = (value) => {
+    registerActivity();
     setMessage(value);
     if (socket.connected && !editingMessage) {
       socket.emit('typing', { conversationId: activeConversationId, userId: currentUserId, isTyping: Boolean(value.trim()) });
@@ -426,6 +469,83 @@ export default function ChatScreen({ currentUser, conversation: conversationProp
         markFailed(finalError.message || firstError.message || 'Message failed. Tap retry.');
         if (!socket.connected) socket.connect();
       }
+    }
+  };
+
+  const sendMediaMessage = async ({ asset, messageType, durationMs = null }) => {
+    const fileInfo = await FileSystem.getInfoAsync(asset.uri, { size: true });
+    const size = Number(asset.size || fileInfo.size || 0);
+    if (size > 8 * 1024 * 1024) throw new Error('Files and voice notes must be 8 MB or smaller.');
+    const base64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 });
+    const mimeType = asset.mimeType || asset.type || (messageType === 'AUDIO' ? 'audio/m4a' : 'application/octet-stream');
+    const attachment = {
+      name: asset.name || `voice-note-${Date.now()}.m4a`,
+      mimeType,
+      size,
+      durationMs,
+      uri: `data:${mimeType};base64,${base64}`,
+    };
+    const clientId = `${currentUserId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    await deliverOutgoing({
+      conversationId: activeConversationId,
+      senderId: currentUserId,
+      content: JSON.stringify(attachment),
+      messageType,
+      clientId,
+      replyToId: replyTo?.id || null,
+      replyText: replyTo?.text || '',
+    });
+    setReplyTo(null);
+    registerActivity();
+  };
+
+  const pickFile = async () => {
+    if (chatLocked || mediaBusy) return;
+    try {
+      const result = await DocumentPicker.getDocumentAsync({ type: '*/*', copyToCacheDirectory: true, multiple: false });
+      const asset = result.assets?.[0];
+      if (result.canceled || !asset) return;
+      setMediaBusy(true);
+      await sendMediaMessage({ asset, messageType: 'FILE' });
+    } catch (fileError) {
+      setError(fileError.message || 'Unable to select this file.');
+    } finally {
+      setMediaBusy(false);
+    }
+  };
+
+  const toggleVoiceRecording = async () => {
+    if (chatLocked || mediaBusy) return;
+    if (recording) {
+      setMediaBusy(true);
+      try {
+        const status = await recording.getStatusAsync();
+        await recording.stopAndUnloadAsync();
+        const uri = recording.getURI();
+        setRecording(null);
+        await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
+        await sendMediaMessage({
+          asset: { uri, name: `voice-note-${Date.now()}.m4a`, mimeType: 'audio/m4a' },
+          messageType: 'AUDIO',
+          durationMs: status?.durationMillis || null,
+        });
+      } catch (recordingError) {
+        setRecording(null);
+        setError(recordingError.message || 'Unable to save the voice note.');
+      } finally {
+        setMediaBusy(false);
+      }
+      return;
+    }
+    try {
+      const permission = await Audio.requestPermissionsAsync();
+      if (!permission.granted) throw new Error('Microphone permission is required to record a voice note.');
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+      const created = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+      setRecording(created.recording);
+      registerActivity();
+    } catch (recordingError) {
+      setError(recordingError.message || 'Unable to start voice recording.');
     }
   };
 
@@ -616,6 +736,7 @@ useEffect(() => {
     if (!activeConversationId) return;
 
     setChatLocked(true);
+    chatLockedRef.current = true;
     setPin('');
     setPinError('');
     setUnlockModalVisible(false);
@@ -633,7 +754,9 @@ useEffect(() => {
     if (!/^\d{6}$/.test(pinValue)) return setPinError('Enter the six-digit access code.');
     try {
       await setChatPin(currentUserId, pinValue, authToken);
+      await relockConversation(activeConversationId, authToken);
       setChatLocked(true);
+      chatLockedRef.current = true;
       setLockModalVisible(false);
       setPin('');
     } catch (pinErrorValue) { setPinError(pinErrorValue.message || 'Unable to save chat PIN'); }
@@ -651,6 +774,8 @@ useEffect(() => {
       await unlockConversation(activeConversationId, pinValue, validity, authToken);
       await reloadMessagesAfterUnlock();
       setChatLocked(false);
+      chatLockedRef.current = false;
+      lastActivityRef.current = Date.now();
       setUnlockModalVisible(false);
       setPin('');
     } catch (pinErrorValue) { setPinError(pinErrorValue.message || 'Incorrect access code'); }
@@ -699,12 +824,12 @@ useEffect(() => {
       <View style={styles.chatSurface}>
         <WatermarkLayer value={watermarkId} />
         <View style={styles.securityBanner}><Feather name="lock" size={9} color={colors.text} /><Text style={styles.securityText}>Secured Chat</Text></View>
-      <ScrollView ref={scrollRef} style={styles.messagesContainer} contentContainerStyle={styles.messagesContent} showsVerticalScrollIndicator={false} onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}>
+      <ScrollView ref={scrollRef} style={styles.messagesContainer} contentContainerStyle={styles.messagesContent} showsVerticalScrollIndicator={false} onTouchStart={registerActivity} onScrollBeginDrag={registerActivity} onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}>
         {chatLocked ? <View style={styles.lockedChatState}><Text style={styles.lockedChatIcon}>▣</Text><Text style={styles.lockedChatTitle}>Chat locked</Text><Text style={styles.lockedChatText}>Enter your access code to view this secure conversation.</Text><Pressable style={styles.greenButton} onPress={() => openPin('unlock')}><Text style={styles.greenButtonText}>Unlock Chat</Text></Pressable></View> : messages.length === 0 ? <View style={styles.emptyChat}><Text style={styles.emptyChatTitle}>Start a secure conversation</Text><Text style={styles.emptyChatText}>Messages are delivered in real time to {chatName}.</Text></View> : visibleMessages.length === 0 ? <View style={styles.emptyChat}><Text style={styles.emptyChatTitle}>No matches</Text><Text style={styles.emptyChatText}>Try another message keyword.</Text></View> : visibleMessages.map((item) => (
           <View key={item.id} style={[styles.messageRow, item.sender === 'me' ? styles.myMessageRow : styles.theirMessageRow]}>
-            <Pressable onPress={() => { if (item.locked) openPin('message', item.id); else if (item.status === 'failed') retryMessage(item); }} onLongPress={() => showMessageActions(item)}>
+            <Pressable onPress={() => { registerActivity(); if (item.locked) openPin('message', item.id); else if (item.status === 'failed') retryMessage(item); else if (item.attachment?.uri) Linking.openURL(item.attachment.uri).catch(() => setError('Unable to open this attachment.')); }} onLongPress={() => showMessageActions(item)}>
               <View style={[styles.messageBubble, item.sender === 'me' ? styles.myBubble : styles.theirBubble, item.locked && styles.lockedBubble]}>
-                {item.locked ? <><Text style={styles.lockedText}>Target locked</Text><Text style={styles.unlockHint}>Tap to unlock</Text></> : <>{item.replyToId && <View style={styles.replyPreview}><Text style={styles.replyPreviewLabel}>Reply</Text><Text style={styles.replyPreviewText} numberOfLines={1}>{item.replyText || 'Original message'}</Text></View>}<Text style={[styles.messageText, item.sender === 'me' ? styles.myMessageText : styles.theirMessageText]}>{item.text}</Text><Text style={[styles.messageTime, item.sender === 'me' ? styles.myTime : styles.theirTime]}>{item.edited ? 'edited · ' : ''}{item.status === 'failed' ? 'Failed · tap to retry' : item.time}{item.sender === 'me' && item.status !== 'failed' ? <Text style={[styles.statusTicks, item.status === 'read' && styles.statusTicksRead]}> {statusMark(item.status)}</Text> : null}</Text></>}
+                {item.locked ? <><Text style={styles.lockedText}>Target locked</Text><Text style={styles.unlockHint}>Tap to unlock</Text></> : <>{item.replyToId && <View style={styles.replyPreview}><Text style={styles.replyPreviewLabel}>Reply</Text><Text style={styles.replyPreviewText} numberOfLines={1}>{item.replyText || 'Original message'}</Text></View>}{item.message_type === 'AUDIO' && <Feather name="mic" size={16} color="#B6D5AF" />} {item.message_type === 'FILE' && <Feather name="file" size={16} color="#B6D5AF" />}<Text style={[styles.messageText, item.sender === 'me' ? styles.myMessageText : styles.theirMessageText]}>{item.text}</Text><Text style={[styles.messageTime, item.sender === 'me' ? styles.myTime : styles.theirTime]}>{item.edited ? 'edited · ' : ''}{item.status === 'failed' ? 'Failed · tap to retry' : item.time}{item.sender === 'me' && item.status !== 'failed' ? <Text style={[styles.statusTicks, item.status === 'read' && styles.statusTicksRead]}> {statusMark(item.status)}</Text> : null}</Text></>}
               </View>
             </Pressable>
           </View>
@@ -716,14 +841,15 @@ useEffect(() => {
       {!!replyTo && <View style={styles.composerContext}><View style={styles.contextBody}><Text style={styles.contextTitle}>Replying to {replyTo.sender === 'me' ? 'yourself' : chatName}</Text><Text style={styles.contextText} numberOfLines={1}>{replyTo.text}</Text></View><Pressable onPress={() => setReplyTo(null)}><Text style={styles.contextClose}>×</Text></Pressable></View>}
       {!!editingMessage && <View style={styles.composerContext}><View style={styles.contextBody}><Text style={styles.contextTitle}>Edit message</Text><Text style={styles.contextText} numberOfLines={1}>{editingMessage.text}</Text></View><Pressable onPress={() => { setEditingMessage(null); setMessage(''); }}><Text style={styles.contextClose}>×</Text></Pressable></View>}
       <View style={styles.inputContainer}>
-        <Pressable style={styles.attachButton} onPress={() => Alert.alert('Attachments', 'Attachment sending will connect to the encrypted file service.') }><Feather name="paperclip" size={26} color={colors.text} /></Pressable>
-        <TextInput style={styles.input} value={message} onChangeText={handleChangeText} placeholder="Message" placeholderTextColor="#A0A0A0" multiline editable={!chatLocked} />
+        <Pressable style={styles.attachButton} onPress={pickFile} disabled={chatLocked || mediaBusy}><Feather name="paperclip" size={26} color={chatLocked || mediaBusy ? colors.faint : colors.text} /></Pressable>
+        <TextInput style={styles.input} value={message} onChangeText={handleChangeText} onFocus={registerActivity} placeholder={mediaBusy ? 'Preparing attachment…' : recording ? 'Recording voice note…' : 'Message'} placeholderTextColor="#A0A0A0" selectionColor={colors.green} multiline editable={!chatLocked && !mediaBusy && !recording} />
         <Pressable
-          style={[styles.sendButton, message.trim() && styles.sendButtonActive]}
-          onPress={message.trim() ? sendMessage : undefined}
+          style={[styles.sendButton, message.trim() && styles.sendButtonActive, recording && styles.recordingButton]}
+          onPress={() => { registerActivity(); if (message.trim()) sendMessage(); else toggleVoiceRecording(); }}
+          disabled={chatLocked || mediaBusy}
         >
           <MaterialCommunityIcons
-            name={message.trim() ? 'send' : 'microphone'}
+            name={message.trim() ? 'send' : recording ? 'stop' : 'microphone'}
             size={24}
             color="#FFFFFF"
           />
@@ -804,9 +930,10 @@ const styles = StyleSheet.create({
   lockedChatText: { color: '#888', textAlign: 'center', marginTop: 8, lineHeight: 20 },
   inputContainer: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 24, paddingTop: 9, paddingBottom: 11, backgroundColor: colors.bg },
   attachButton: { width: 40, height: 42, alignItems: 'center', justifyContent: 'center', marginLeft: 6 },
-  input: { flex: 1, minHeight: 44, maxHeight: 96, borderRadius: 8, backgroundColor: colors.soft, paddingHorizontal: 18, paddingVertical: 11, color: colors.text, fontSize: 14 },
+  input: { flex: 1, minHeight: 44, maxHeight: 96, borderRadius: 8, backgroundColor: colors.soft, paddingHorizontal: 18, paddingVertical: 11, color: '#101010', fontSize: 14, textAlignVertical: 'top' },
   sendButton: { width: 46, height: 46, borderRadius: 23, backgroundColor: colors.green, justifyContent: 'center', alignItems: 'center', marginLeft: 8 },
   sendButtonActive: { backgroundColor: colors.green },
+  recordingButton: { backgroundColor: '#B33A3A' },
   composerContext: { marginHorizontal: 14, padding: 9, borderTopLeftRadius: 9, borderTopRightRadius: 9, backgroundColor: '#EAF5E7', flexDirection: 'row', alignItems: 'center' },
   contextBody: { flex: 1 },
   contextTitle: { color: '#244D1F', fontSize: 11, fontWeight: '800' },

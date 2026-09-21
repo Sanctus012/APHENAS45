@@ -28,7 +28,9 @@ export default function AdminProvisioningScreen({ officer, authToken, onOpenChat
     setSecureIdLoading(true);
     try {
       const result = await generateOfficerSecureId(authToken);
-      setSecureId(result.secureId || '');
+      const nextSecureId = result.secureId || result.secure_id || result.watermarkId || result.watermark_id || '';
+      if (!nextSecureId) throw new Error('The server returned an empty Watermark ID. Tap refresh to try again.');
+      setSecureId(String(nextSecureId).trim().toUpperCase());
     } catch (error) {
       Alert.alert('Watermark ID failed', error.message || 'Unable to generate Watermark ID.');
     } finally {
