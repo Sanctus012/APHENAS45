@@ -29,7 +29,9 @@ const app = express();
 
 app.use(cors());
 
-app.use(express.json());
+// Media messages are encrypted into the message body as base64 payloads.
+// Keep the limit above the client-side 8 MB attachment cap after base64 expansion.
+app.use(express.json({ limit: '12mb' }));
 
 app.use(
   express.urlencoded({

@@ -132,6 +132,7 @@ export default function ChatScreen({ currentUser, conversation: conversationProp
   const inactivityTimerRef = useRef(null);
   const chatLockedRef = useRef(true);
   const lastActivityRef = useRef(Date.now());
+  const soundRef = useRef(null);
 
   useEffect(() => {
     setActiveConversationId(conversationId);
@@ -200,6 +201,11 @@ export default function ChatScreen({ currentUser, conversation: conversationProp
       if (inactivityTimerRef.current) clearInterval(inactivityTimerRef.current);
     };
   }, [lockForInactivity]);
+
+  useEffect(() => () => {
+    soundRef.current?.unloadAsync().catch(() => {});
+    soundRef.current = null;
+  }, []);
 
   const addMessage = useCallback((incoming) => {
     setMessages((current) => {
@@ -472,6 +478,30 @@ export default function ChatScreen({ currentUser, conversation: conversationProp
     }
   };
 
+  const openAttachment = async (item) => {
+    const attachment = item?.attachment;
+    if (!attachment?.uri) return;
+    try {
+      let uri = attachment.uri;
+      if (uri.startsWith('data:')) {
+        const commaIndex = uri.indexOf(',');
+        const base64 = commaIndex >= 0 ? uri.slice(commaIndex + 1) : '';
+        const extension = String(attachment.mimeType || 'application/octet-stream').split('/')[1]?.split(';')[0] || 'bin';
+        uri = `${FileSystem.cacheDirectory}aphenas-${item.id}.${extension}`;
+        await FileSystem.writeAsStringAsync(uri, base64, { encoding: FileSystem.EncodingType.Base64 });
+      }
+      if (item.message_type === 'AUDIO') {
+        if (soundRef.current) await soundRef.current.unloadAsync().catch(() => {});
+        const loaded = await Audio.Sound.createAsync({ uri }, { shouldPlay: true });
+        soundRef.current = loaded.sound;
+      } else {
+        await Linking.openURL(uri);
+      }
+    } catch (attachmentError) {
+      setError(attachmentError.message || 'Unable to open this attachment.');
+    }
+  };
+
   const sendMediaMessage = async ({ asset, messageType, durationMs = null }) => {
     const fileInfo = await FileSystem.getInfoAsync(asset.uri, { size: true });
     const size = Number(asset.size || fileInfo.size || 0);
@@ -695,8 +725,10 @@ export default function ChatScreen({ currentUser, conversation: conversationProp
   setSelectedMessageId(messageId);
 
   if (mode === 'lock') {
+    setUnlockModalVisible(false);
     setLockModalVisible(true);
   } else {
+    setLockModalVisible(false);
     setUnlockModalVisible(true);
   }
 
@@ -758,6 +790,7 @@ useEffect(() => {
       setChatLocked(true);
       chatLockedRef.current = true;
       setLockModalVisible(false);
+      setUnlockModalVisible(false);
       setPin('');
     } catch (pinErrorValue) { setPinError(pinErrorValue.message || 'Unable to save chat PIN'); }
   };
@@ -776,6 +809,7 @@ useEffect(() => {
       setChatLocked(false);
       chatLockedRef.current = false;
       lastActivityRef.current = Date.now();
+      setLockModalVisible(false);
       setUnlockModalVisible(false);
       setPin('');
     } catch (pinErrorValue) { setPinError(pinErrorValue.message || 'Incorrect access code'); }
@@ -827,7 +861,7 @@ useEffect(() => {
       <ScrollView ref={scrollRef} style={styles.messagesContainer} contentContainerStyle={styles.messagesContent} showsVerticalScrollIndicator={false} onTouchStart={registerActivity} onScrollBeginDrag={registerActivity} onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}>
         {chatLocked ? <View style={styles.lockedChatState}><Text style={styles.lockedChatIcon}>▣</Text><Text style={styles.lockedChatTitle}>Chat locked</Text><Text style={styles.lockedChatText}>Enter your access code to view this secure conversation.</Text><Pressable style={styles.greenButton} onPress={() => openPin('unlock')}><Text style={styles.greenButtonText}>Unlock Chat</Text></Pressable></View> : messages.length === 0 ? <View style={styles.emptyChat}><Text style={styles.emptyChatTitle}>Start a secure conversation</Text><Text style={styles.emptyChatText}>Messages are delivered in real time to {chatName}.</Text></View> : visibleMessages.length === 0 ? <View style={styles.emptyChat}><Text style={styles.emptyChatTitle}>No matches</Text><Text style={styles.emptyChatText}>Try another message keyword.</Text></View> : visibleMessages.map((item) => (
           <View key={item.id} style={[styles.messageRow, item.sender === 'me' ? styles.myMessageRow : styles.theirMessageRow]}>
-            <Pressable onPress={() => { registerActivity(); if (item.locked) openPin('message', item.id); else if (item.status === 'failed') retryMessage(item); else if (item.attachment?.uri) Linking.openURL(item.attachment.uri).catch(() => setError('Unable to open this attachment.')); }} onLongPress={() => showMessageActions(item)}>
+            <Pressable onPress={() => { registerActivity(); if (item.locked) openPin('message', item.id); else if (item.status === 'failed') retryMessage(item); else if (item.attachment?.uri) openAttachment(item); }} onLongPress={() => showMessageActions(item)}>
               <View style={[styles.messageBubble, item.sender === 'me' ? styles.myBubble : styles.theirBubble, item.locked && styles.lockedBubble]}>
                 {item.locked ? <><Text style={styles.lockedText}>Target locked</Text><Text style={styles.unlockHint}>Tap to unlock</Text></> : <>{item.replyToId && <View style={styles.replyPreview}><Text style={styles.replyPreviewLabel}>Reply</Text><Text style={styles.replyPreviewText} numberOfLines={1}>{item.replyText || 'Original message'}</Text></View>}{item.message_type === 'AUDIO' && <Feather name="mic" size={16} color="#B6D5AF" />} {item.message_type === 'FILE' && <Feather name="file" size={16} color="#B6D5AF" />}<Text style={[styles.messageText, item.sender === 'me' ? styles.myMessageText : styles.theirMessageText]}>{item.text}</Text><Text style={[styles.messageTime, item.sender === 'me' ? styles.myTime : styles.theirTime]}>{item.edited ? 'edited · ' : ''}{item.status === 'failed' ? 'Failed · tap to retry' : item.time}{item.sender === 'me' && item.status !== 'failed' ? <Text style={[styles.statusTicks, item.status === 'read' && styles.statusTicksRead]}> {statusMark(item.status)}</Text> : null}</Text></>}
               </View>
