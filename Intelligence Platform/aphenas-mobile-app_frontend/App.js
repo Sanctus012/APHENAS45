@@ -25,13 +25,17 @@ import AdminProvisioningScreen from './screens/AdminProvisioningScreen';
 import socket from './services/socketService';
 import { colors } from './theme/aphenasTheme';
 
+// React Native 0.86 does not guarantee that Text.render is callable.
+// Guard the legacy font override so it cannot crash the release APK at startup.
 const oldTextRender = Text.render;
-Text.render = function (...args) {
-  const origin = oldTextRender.call(this, ...args);
-  return React.cloneElement(origin, {
-    style: [{ fontFamily: 'sans-serif-condensed' }, origin.props.style],
-  });
-};
+if (typeof oldTextRender === 'function') {
+  Text.render = function (...args) {
+    const origin = oldTextRender.call(this, ...args);
+    return React.cloneElement(origin, {
+      style: [{ fontFamily: 'sans-serif-condensed' }, origin.props.style],
+    });
+  };
+}
 
 const RootStack = createNativeStackNavigator();
 const ChatStack = createNativeStackNavigator();
